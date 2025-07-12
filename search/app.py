@@ -3,6 +3,10 @@ from flask_cors import CORS
 import os
 from maze_stack import solve_stack
 from maze_queue import solve_queue
+import os
+
+# Ensure static directory exists
+os.makedirs("static", exist_ok=True)
 
 app = Flask(__name__)
 CORS(app)

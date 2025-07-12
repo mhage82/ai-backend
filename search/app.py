@@ -5,11 +5,13 @@ from maze_stack import solve_stack
 from maze_queue import solve_queue
 import os
 
+app = Flask(__name__)
+
+CORS(app)
+
+
 # Ensure static directory exists
 os.makedirs("static", exist_ok=True)
-
-app = Flask(__name__)
-CORS(app)
 
 @app.route("/solve", methods=["POST"])
 def solve():

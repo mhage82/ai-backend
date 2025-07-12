@@ -6,7 +6,6 @@ from maze_queue import solve_queue
 import os
 
 app = Flask(__name__)
-
 CORS(app)
 
 

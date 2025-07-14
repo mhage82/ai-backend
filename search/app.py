@@ -12,6 +12,18 @@ CORS(app)
 # Ensure static directory exists
 os.makedirs("static", exist_ok=True)
 
+@app.route("/maze-image/<maze>")
+def maze_image(maze):
+    if not maze.endswith(".txt"):
+        return jsonify({"error": "Invalid maze file"}), 400
+    try:
+        m = Maze(os.path.join("mazes", maze))
+        image_filename = f"{maze.replace('.txt', '')}_original.png"
+        m.output_image(os.path.join("static", image_filename), show_solution=False)
+        return send_file(os.path.join("static", image_filename), mimetype='image/png')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
 @app.route("/solve", methods=["POST"])
 def solve():
     data = request.get_json()

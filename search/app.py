@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
+from maze_solver import Maze
 from maze_stack import solve_stack
 from maze_queue import solve_queue
 import os
@@ -16,14 +17,19 @@ os.makedirs("static", exist_ok=True)
 def maze_image(maze):
     if not maze.endswith(".txt"):
         return jsonify({"error": "Invalid maze file"}), 400
+
     try:
-        m = Maze(os.path.join("mazes", maze))
+        maze_path = os.path.join("mazes", maze)  # e.g., "mazes/maze1.txt"
+        m = Maze(maze_path)
         image_filename = f"{maze.replace('.txt', '')}_original.png"
-        m.output_image(os.path.join("static", image_filename), show_solution=False)
-        return send_file(os.path.join("static", image_filename), mimetype='image/png')
+        output_path = os.path.join("static", image_filename)  # e.g., "static/maze1_original.png"
+
+        m.output_image(output_path, show_solution=False)
+
+        return send_file(output_path, mimetype='image/png')
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
+        
 @app.route("/solve", methods=["POST"])
 def solve():
     data = request.get_json()

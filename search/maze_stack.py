@@ -1,4 +1,4 @@
-from maze_solver import Maze
+from .maze_solver import Maze
 
 def solve_stack(filename):
     m = Maze(filename, use_stack=True)

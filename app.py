@@ -7,6 +7,7 @@ from search.maze_solver import Maze
 from search.maze_stack import solve_stack
 from search.maze_queue import solve_queue
 
+from ttt.ttt_logic import initial_state, player, actions, result, winner, terminal
 app = Flask(__name__)
 CORS(app)
 

@@ -62,22 +62,40 @@ def ttt_start():
 
 @app.route("/ttt/move", methods=["POST"])
 def ttt_move():
+    from ttt.ttt_logic import initial_state, player, actions, result, winner, terminal, minimax
+
     data = request.get_json()
     board = data.get("board")
-    move = data.get("move")  # e.g. [0, 2]
+    move = data.get("move")  # [i, j]
+
     if board is None or move is None:
         return jsonify({"error": "Missing board or move."}), 400
+
     try:
+        # Apply player's move
         new_board = result(board, tuple(move))
-        current_player = player(new_board)
-        game_over = terminal(new_board)
-        win = winner(new_board)
+
+        # If game is over after player move, return result
+        if terminal(new_board):
+            return jsonify({
+                "board": new_board,
+                "next_player": None,
+                "winner": winner(new_board),
+                "game_over": True
+            })
+
+        # Compute AI move
+        ai_move = minimax(new_board)
+        if ai_move is not None:
+            new_board = result(new_board, ai_move)
+
         return jsonify({
             "board": new_board,
-            "next_player": None if game_over else current_player,
-            "winner": win,
-            "game_over": game_over
+            "next_player": None if terminal(new_board) else player(new_board),
+            "winner": winner(new_board),
+            "game_over": terminal(new_board)
         })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 if __name__ == "__main__":

@@ -52,13 +52,16 @@ def solve():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/static/<filename>")
 def static_file(filename):
     return send_from_directory("static", filename)
 
+
 @app.route("/ttt/start", methods=["GET"])
 def ttt_start():
     return jsonify({"board": initial_state()})
+
 
 @app.route("/ttt/move", methods=["POST"])
 def ttt_move():
@@ -66,16 +69,15 @@ def ttt_move():
 
     data = request.get_json()
     board = data.get("board")
-    move = data.get("move")  # [i, j]
+    move = data.get("move")
 
     if board is None or move is None:
         return jsonify({"error": "Missing board or move."}), 400
 
     try:
-        # Apply player's move
-        new_board = result(board, tuple(move))
+        # Apply player's move as "X"
+        new_board = result(board, tuple(move), forced_player="X")
 
-        # If game is over after player move, return result
         if terminal(new_board):
             return jsonify({
                 "board": new_board,
@@ -84,10 +86,10 @@ def ttt_move():
                 "game_over": True
             })
 
-        # Compute AI move
+        # AI move as "O"
         ai_move = minimax(new_board)
         if ai_move is not None:
-            new_board = result(new_board, ai_move)
+            new_board = result(new_board, ai_move, forced_player="O")
 
         return jsonify({
             "board": new_board,
@@ -98,5 +100,6 @@ def ttt_move():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)

@@ -46,15 +46,16 @@ def actions(board):
                 possible_actions.append((row_index, col_index))
     return possible_actions
 
-def result(board, action):
+
+def result(board, action, forced_player=None):
     """
     Returns the board that results from making move (i, j) on the board.
     """
     temp_board = copy.deepcopy(board)
     i, j = action
-    temp_board[i][j] = player(board)
+    current_player = forced_player if forced_player else player(board)
+    temp_board[i][j] = current_player
     return temp_board
-
 
 def winner(board):
     """

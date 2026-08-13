@@ -1,4 +1,7 @@
 flask
 flask-cors
+flask-sock
+simple-websocket
+gunicorn
 pillow
 pygame

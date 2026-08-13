@@ -11,7 +11,10 @@ from flask_sock import Sock
 import os
 import threading
 import json
-
+import hmac
+import json
+import secrets
+import time
 # ---------------------------------------------------------------------------
 # Existing project imports
 # ---------------------------------------------------------------------------
@@ -234,6 +237,127 @@ def ttt_move():
 # ---------------------------------------------------------------------------
 # KVM HTTP API
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Browser KVM authentication
+# ---------------------------------------------------------------------------
+
+KVM_TICKET_LIFETIME_SECONDS = 60
+
+kvm_tickets = {}
+kvm_tickets_lock = threading.Lock()
+
+
+def cleanup_expired_kvm_tickets():
+    now = time.time()
+
+    with kvm_tickets_lock:
+        expired = [
+            token
+            for token, expires_at in kvm_tickets.items()
+            if expires_at <= now
+        ]
+
+        for token in expired:
+            del kvm_tickets[token]
+
+
+def create_kvm_ticket():
+    cleanup_expired_kvm_tickets()
+
+    token = secrets.token_urlsafe(32)
+
+    expires_at = (
+        time.time()
+        + KVM_TICKET_LIFETIME_SECONDS
+    )
+
+    with kvm_tickets_lock:
+        kvm_tickets[token] = expires_at
+
+    return token
+
+
+def consume_kvm_ticket(token):
+    """
+    A ticket can be used exactly once.
+
+    Returns True only when:
+      - the ticket exists
+      - it has not expired
+
+    The ticket is removed immediately.
+    """
+
+    cleanup_expired_kvm_tickets()
+
+    with kvm_tickets_lock:
+        expires_at = kvm_tickets.pop(
+            token,
+            None,
+        )
+
+    if expires_at is None:
+        return False
+
+    return expires_at > time.time()
+
+@app.route("/kvm/login", methods=["POST"])
+def kvm_login():
+    expected_password = os.environ.get(
+        "KVM_CLIENT_TOKEN"
+    )
+
+    if not expected_password:
+        return jsonify({
+            "ok": False,
+            "error": "KVM client authentication is not configured"
+        }), 503
+
+    data = request.get_json(
+        silent=True
+    ) or {}
+
+    provided_password = data.get(
+        "password",
+        ""
+    )
+
+    if not isinstance(
+        provided_password,
+        str,
+    ):
+        return jsonify({
+            "ok": False,
+            "error": "Invalid password"
+        }), 401
+
+    if not hmac.compare_digest(
+        provided_password,
+        expected_password,
+    ):
+        print(
+            "[KVM] Rejected browser login."
+        )
+
+        return jsonify({
+            "ok": False,
+            "error": "Invalid password"
+        }), 401
+
+    ticket = create_kvm_ticket()
+
+    print(
+        "[KVM] Browser login accepted."
+    )
+
+    return jsonify({
+        "ok": True,
+        "ticket": ticket,
+        "expires_in": KVM_TICKET_LIFETIME_SECONDS,
+        "pi_connected": (
+            pi_connection is not None
+        ),
+    })
 
 @app.route("/kvm/status", methods=["GET"])
 def kvm_status():
@@ -396,46 +520,46 @@ def kvm_pi_socket(ws):
 @sock.route("/ws/kvm/client")
 def kvm_client_socket(ws):
     """
-    WebSocket used by the remote control client.
+    Remote browser/controller WebSocket.
 
-    For now, authentication uses a separate shared secret:
+    Authentication uses a short-lived one-time ticket obtained from:
 
-        X-KVM-Client-Token: <secret>
+        POST /kvm/login
 
-    The server compares it against:
+    Example:
 
-        KVM_CLIENT_TOKEN
+        wss://server/ws/kvm/client?ticket=ABC123
 
-    Messages received here are forwarded to the currently-connected Pi.
+    The ticket is consumed immediately after a successful connection.
     """
 
-    expected_token = os.environ.get(
-        "KVM_CLIENT_TOKEN"
+    ticket = request.args.get(
+        "ticket",
+        ""
     )
 
-    provided_token = request.headers.get(
-        "X-KVM-Client-Token"
-    )
-
-    if not expected_token:
+    if not ticket:
         print(
-            "[KVM] ERROR: "
-            "KVM_CLIENT_TOKEN is not configured."
+            "[KVM] Rejected client WebSocket: "
+            "missing ticket."
         )
 
         ws.close()
         return
 
-    if provided_token != expected_token:
+    if not consume_kvm_ticket(
+        ticket
+    ):
         print(
-            "[KVM] Rejected client connection: invalid token."
+            "[KVM] Rejected client WebSocket: "
+            "invalid or expired ticket."
         )
 
         ws.close()
         return
 
     print(
-        "[KVM] Remote client connected."
+        "[KVM] Authenticated remote client connected."
     )
 
     try:
@@ -445,18 +569,75 @@ def kvm_client_socket(ws):
             if message is None:
                 break
 
+            # -------------------------------------------------------
+            # Validate JSON before forwarding.
+            # -------------------------------------------------------
+
+            try:
+                parsed = json.loads(
+                    message
+                )
+
+                if not isinstance(
+                    parsed,
+                    dict,
+                ):
+                    raise ValueError(
+                        "Message must be a JSON object"
+                    )
+
+                event_type = parsed.get(
+                    "type"
+                )
+
+                allowed_types = {
+                    "key_down",
+                    "key_up",
+                    "mouse_move",
+                    "mouse_down",
+                    "mouse_up",
+                    "mouse_scroll",
+                    "release_all",
+                    "ping",
+                }
+
+                if event_type not in allowed_types:
+                    raise ValueError(
+                        f"Unsupported event type: {event_type}"
+                    )
+
+            except Exception as exc:
+                ws.send(
+                    json.dumps({
+                        "ok": False,
+                        "error": str(exc),
+                    })
+                )
+
+                continue
+
+            # -------------------------------------------------------
+            # Find the connected Pi.
+            # -------------------------------------------------------
+
             with pi_connection_lock:
-                current_pi = pi_connection
+                current_pi = (
+                    pi_connection
+                )
 
             if current_pi is None:
                 ws.send(
                     json.dumps({
                         "ok": False,
-                        "error": "Raspberry Pi is not connected"
+                        "error": "Raspberry Pi is not connected",
                     })
                 )
 
                 continue
+
+            # -------------------------------------------------------
+            # Forward browser -> Pi.
+            # -------------------------------------------------------
 
             try:
                 current_pi.send(
@@ -465,20 +646,20 @@ def kvm_client_socket(ws):
 
                 ws.send(
                     json.dumps({
-                        "ok": True
+                        "ok": True,
                     })
                 )
 
             except Exception as exc:
                 print(
-                    "[KVM] Failed forwarding message to Pi: "
-                    f"{exc}"
+                    "[KVM] Failed forwarding "
+                    f"message to Pi: {exc}"
                 )
 
                 ws.send(
                     json.dumps({
                         "ok": False,
-                        "error": str(exc)
+                        "error": str(exc),
                     })
                 )
 
@@ -489,8 +670,26 @@ def kvm_client_socket(ws):
         )
 
     finally:
+        # Important safety measure:
+        # release Ctrl/Shift/mouse buttons if the browser disappears.
+        try:
+            with pi_connection_lock:
+                current_pi = (
+                    pi_connection
+                )
+
+            if current_pi is not None:
+                current_pi.send(
+                    json.dumps({
+                        "type": "release_all"
+                    })
+                )
+
+        except Exception:
+            pass
+
         print(
-            "[KVM] Remote client disconnected."
+            "[KVM] Authenticated remote client disconnected."
         )
 # ---------------------------------------------------------------------------
 # Main

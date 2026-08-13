@@ -393,7 +393,105 @@ def kvm_pi_socket(ws):
             "[KVM] Raspberry Pi disconnected."
         )
 
+@sock.route("/ws/kvm/client")
+def kvm_client_socket(ws):
+    """
+    WebSocket used by the remote control client.
 
+    For now, authentication uses a separate shared secret:
+
+        X-KVM-Client-Token: <secret>
+
+    The server compares it against:
+
+        KVM_CLIENT_TOKEN
+
+    Messages received here are forwarded to the currently-connected Pi.
+    """
+
+    expected_token = os.environ.get(
+        "KVM_CLIENT_TOKEN"
+    )
+
+    provided_token = request.headers.get(
+        "X-KVM-Client-Token"
+    )
+
+    if not expected_token:
+        print(
+            "[KVM] ERROR: "
+            "KVM_CLIENT_TOKEN is not configured."
+        )
+
+        ws.close()
+        return
+
+    if provided_token != expected_token:
+        print(
+            "[KVM] Rejected client connection: invalid token."
+        )
+
+        ws.close()
+        return
+
+    print(
+        "[KVM] Remote client connected."
+    )
+
+    try:
+        while True:
+            message = ws.receive()
+
+            if message is None:
+                break
+
+            with pi_connection_lock:
+                current_pi = pi_connection
+
+            if current_pi is None:
+                ws.send(
+                    json.dumps({
+                        "ok": False,
+                        "error": "Raspberry Pi is not connected"
+                    })
+                )
+
+                continue
+
+            try:
+                current_pi.send(
+                    message
+                )
+
+                ws.send(
+                    json.dumps({
+                        "ok": True
+                    })
+                )
+
+            except Exception as exc:
+                print(
+                    "[KVM] Failed forwarding message to Pi: "
+                    f"{exc}"
+                )
+
+                ws.send(
+                    json.dumps({
+                        "ok": False,
+                        "error": str(exc)
+                    })
+                )
+
+    except Exception as exc:
+        print(
+            "[KVM] Client WebSocket error: "
+            f"{exc}"
+        )
+
+    finally:
+        print(
+            "[KVM] Remote client disconnected."
+        )
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
